@@ -1,0 +1,61 @@
+# Keeps this fork's `main` in sync with the upstream project.
+#
+# Runs daily and on demand (Actions tab → "Sync upstream" → Run workflow).
+# It rebases the fork's own commits on top of HKUDS/AI-Trader's latest `main`
+# and force-pushes with lease. If the rebase conflicts, it aborts and opens
+# an issue instead of pushing anything half-merged.
+#
+# Note: scheduled runs only execute from the default branch, so this file
+# must live on `main`. GitHub pauses scheduled workflows on forks after
+# 60 days of repository inactivity — re-enable via the Actions tab if that
+# happens, or trigger a manual run.
+
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebase fork onto upstream
+        id: rebase
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/HKUDS/AI-Trader.git
+          git fetch upstream
+          git checkout main
+          if git merge-base --is-ancestor upstream/main main; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rebase upstream/main; then
+            git push --force-with-lease origin main
+            echo "status=rebased" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open issue when the rebase conflicts
+        if: steps.rebase.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Upstream sync needs a manual rebase" \
+            --body "The nightly sync could not rebase \`main\` onto \`HKUDS/AI-Trader\` — it hit conflicts and aborted without pushing. Resolve locally with \`git fetch upstream && git rebase upstream/main\`, fix the conflicts, then push."

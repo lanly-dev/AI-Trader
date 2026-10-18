@@ -6,11 +6,11 @@ with price refreshes, profit-history compaction, and market-intel snapshots.
 """
 
 import asyncio
-import fcntl
 import logging
 import os
 import signal
 import sys
+import tempfile
 from contextlib import suppress
 
 from database import init_database, get_database_status
@@ -35,12 +35,46 @@ async def _renew_redis_lock(lock, timeout_seconds: int) -> None:
             os._exit(1)
 
 
-def _acquire_file_lock():
-    lock_path = os.getenv("AI_TRADER_WORKER_LOCK_FILE", "/tmp/ai-trader-worker.lock")
-    handle = open(lock_path, "w", encoding="utf-8")
+def _lock_file_nonblocking(handle) -> bool:
+    """Best-effort non-blocking exclusive lock. True when acquired."""
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        if os.name == "nt":
+            # Windows: msvcrt has no flock; lock 1 byte near the start instead.
+            # Raises OSError when another process holds the lock.
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except (BlockingIOError, OSError):
+        return False
+
+
+def _unlock_file(handle) -> None:
+    with suppress(Exception):
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _default_lock_path() -> str:
+    return os.path.join(tempfile.gettempdir(), "ai-trader-worker.lock")
+
+
+def _acquire_file_lock():
+    lock_path = os.getenv("AI_TRADER_WORKER_LOCK_FILE", _default_lock_path())
+    handle = open(lock_path, "w", encoding="utf-8")
+    if not _lock_file_nonblocking(handle):
         handle.close()
         logger.warning("Another AI-Trader worker is already running; lock_file=%s", lock_path)
         return None
@@ -54,8 +88,7 @@ def _acquire_file_lock():
 def _release_file_lock(handle) -> None:
     if handle is None:
         return
-    with suppress(Exception):
-        fcntl.flock(handle, fcntl.LOCK_UN)
+    _unlock_file(handle)
     with suppress(Exception):
         handle.close()
 
