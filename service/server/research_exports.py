@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from database import get_db_connection
+from utils import safe_filename
 
 
 CHALLENGE_EXPORTS: dict[str, dict[str, Any]] = {
@@ -464,7 +465,7 @@ def export_challenge_tables(
             challenge_key=challenge_key,
             market=market,
         )
-        path = target_dir / filename
+        path = target_dir / safe_filename(filename)
         write_csv(path, columns, rows)
         written[filename] = str(path)
 
@@ -1487,7 +1488,7 @@ def write_research_schemas(output_dir: str | Path, dataset_names: Optional[_Iter
     written: dict[str, str] = {}
     for dataset_name in dataset_names or get_research_dataset_names():
         filename = normalize_dataset_name(dataset_name)
-        path = target_dir / f"{filename[:-4]}.schema.json"
+        path = target_dir / safe_filename(f"{filename[:-4]}.schema.json")
         with path.open("w", encoding="utf-8") as handle:
             _json.dump(research_schema_for_dataset(filename), handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
@@ -1530,7 +1531,7 @@ def export_research_dataset(
             include_content=include_content,
             limit=limit,
         )
-        path = target_dir / (filename if fmt == "csv" else f"{filename[:-4]}.json")
+        path = target_dir / safe_filename(filename if fmt == "csv" else f"{filename[:-4]}.json")
         if fmt == "csv":
             write_csv(path, columns, rows)
         else:

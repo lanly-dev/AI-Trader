@@ -12,6 +12,25 @@ import re
 from typing import Optional, Dict, Any
 
 
+# Characters Windows forbids in file names, plus ASCII control characters.
+_UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def safe_filename(name: str, replacement: str = "-") -> str:
+    """Make a string safe to use as a file name on Windows and POSIX.
+
+    Replaces ``<>:"/\\|?*`` and control characters (notably ``:`` from
+    ISO-8601 timestamps such as ``2026-10-18T08:00:00Z``) with ``-``,
+    strips trailing dots/spaces (illegal on Windows), and guards against
+    empty or dot-only results.
+    """
+    cleaned = _UNSAFE_FILENAME_CHARS.sub(replacement, str(name))
+    cleaned = cleaned.strip().rstrip(". ")
+    if not cleaned or cleaned in {".", ".."}:
+        cleaned = "unnamed"
+    return cleaned
+
+
 def hash_password(password: str) -> str:
     """Hash a password using SHA256 with salt."""
     salt = secrets.token_hex(16)
